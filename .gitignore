@@ -1,0 +1,4 @@
+.env
+__pycache__/
+frigate/config/model_cache/
+frigate/config/*.db*
