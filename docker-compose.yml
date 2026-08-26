@@ -1,0 +1,79 @@
+services:
+  frigate:
+    # Case B (DVA3221 / NVIDIA): use ghcr.io/blakeblackshear/frigate:stable-tensorrt
+    # and uncomment the nvidia block below (requires the pdbear driver package).
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: frigate
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # Sized for 2 cameras at 720p detect resolution; add ~64mb per extra camera.
+    shm_size: "256mb"
+    devices:
+      # Case A: Intel iGPU (QuickSync) for decode + OpenVINO detection.
+      # Case C (no GPU): delete this block and set `device: CPU` in config.yml.
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/dri/card0:/dev/dri/card0
+    group_add:
+      # Synology owns /dev/dri as root:videodriver — set the GID in .env
+      # (find it with: grep videodriver /etc/group)
+      - "${VIDEODRIVER_GID:-937}"
+    volumes:
+      - ./frigate/config:/config
+      - /volume1/frigate_media:/media/frigate
+      - type: tmpfs # decoded-frame cache in RAM, spares the NAS disks
+        target: /tmp/cache
+        tmpfs:
+          size: 1g
+    ports:
+      - "8971:8971" # Web UI (authenticated, TLS)
+      - "8554:8554" # RTSP restream (optional: point Surveillance Station here)
+      - "8555:8555/tcp" # WebRTC live view
+      - "8555:8555/udp"
+    environment:
+      FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+    # --- Case B (NVIDIA / DVA3221) --------------------------------------
+    # runtime: nvidia
+    # environment:
+    #   FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+    #   NVIDIA_VISIBLE_DEVICES: all
+    #   NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    # ---------------------------------------------------------------------
+    depends_on:
+      - mosquitto
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+    # Not exposed to the LAN by default. Uncomment if Home Assistant or
+    # other clients on your network should subscribe to Frigate events.
+    # ports:
+    #   - "1883:1883"
+
+  bear-notifier:
+    build: ./notifier
+    container_name: bear-notifier
+    restart: unless-stopped
+    environment:
+      MQTT_HOST: mosquitto
+      FRIGATE_URL: http://frigate:5000 # internal unauthenticated API port
+      NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
+      # Labels that trigger a push. dog/cat/cow are kept as "bear proxies"
+      # because the free COCO model sometimes calls a bear one of those;
+      # PROXY_MIN_AREA suppresses actual house-pet-sized detections.
+      ALERT_LABELS: bear
+      PROXY_LABELS: dog,cat,cow
+      PROXY_MIN_AREA: "30000"
+      REQUIRED_ZONES: wooded_hill
+      COOLDOWN_SECONDS: "120"
+    depends_on:
+      - mosquitto
+      - frigate
+
+volumes:
+  mosquitto_data:
