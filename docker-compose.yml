@@ -6,8 +6,7 @@ services:
     container_name: frigate
     restart: unless-stopped
     stop_grace_period: 30s
-    # Sized for 2 cameras at 720p detect resolution; add ~64mb per extra camera.
-    shm_size: "256mb"
+    shm_size: "128mb"
     devices:
       # Case A: Intel iGPU (QuickSync) for decode + OpenVINO detection.
       # Case C (no GPU): delete this block and set `device: CPU` in config.yml.
@@ -26,15 +25,15 @@ services:
           size: 1g
     ports:
       - "8971:8971" # Web UI (authenticated, TLS)
-      - "8554:8554" # RTSP restream (optional: point Surveillance Station here)
       - "8555:8555/tcp" # WebRTC live view
       - "8555:8555/udp"
     environment:
-      FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+      # Tapo CLOUD password, used for the camera's tapo:// stream
+      FRIGATE_TAPO_CLOUD_PASSWORD: ${FRIGATE_TAPO_CLOUD_PASSWORD}
     # --- Case B (NVIDIA / DVA3221) --------------------------------------
     # runtime: nvidia
     # environment:
-    #   FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+    #   FRIGATE_TAPO_CLOUD_PASSWORD: ${FRIGATE_TAPO_CLOUD_PASSWORD}
     #   NVIDIA_VISIBLE_DEVICES: all
     #   NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
     # ---------------------------------------------------------------------
@@ -71,6 +70,35 @@ services:
       PROXY_MIN_AREA: "30000"
       REQUIRED_ZONES: wooded_hill
       COOLDOWN_SECONDS: "120"
+    depends_on:
+      - mosquitto
+      - frigate
+
+  # Smart-plug tripwire for the battery camera — see "How it works" in the
+  # README. Polls the plug locally and wakes the Frigate camera on motion.
+  tapo-bridge:
+    build: ./tapo-bridge
+    container_name: tapo-bridge
+    restart: unless-stopped
+    environment:
+      MQTT_HOST: mosquitto
+      # The smart plug flipped ON by the Tapo app automation on camera motion:
+      PLUG_HOST: ${TAPO_PLUG_HOST}
+      TAPO_USERNAME: ${TAPO_USERNAME:-}
+      TAPO_PASSWORD: ${TAPO_PASSWORD:-}
+      # Frigate camera (see config.yml) to wake while motion is active:
+      FRIGATE_CAMERA: hillside_tapo
+      FRIGATE_URL: http://frigate:5000
+      WINDOW_SECONDS: "180"
+      # Canary: warn if no PIR trigger for this many hours (0 disables).
+      # Enable once you know the hill's normal activity rhythm.
+      STALE_TRIGGER_HOURS: "0"
+      # Also push a plain "motion" notification on every PIR trigger (not
+      # just confirmed bears):
+      NOTIFY_ON_MOTION: "false"
+      NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
     depends_on:
       - mosquitto
       - frigate

@@ -1,4 +1,4 @@
-# Frigate configuration — bear watch on the wooded hill.
+# Frigate configuration — bear watch via a battery Tapo camera (C403).
 # Reference: https://docs.frigate.video/configuration/reference
 
 mqtt:
@@ -28,37 +28,30 @@ model:
 ffmpeg:
   hwaccel_args: preset-vaapi
 
-# --- Camera sources ---------------------------------------------------------
-# go2rtc restreams each camera once, so Frigate's detect/record roles (and
-# optionally Surveillance Station) don't open multiple connections per camera.
-# Replace IPs and paths with your cameras'. The examples are Dahua/Loryta-style;
-# Hikvision main/sub paths look like /Streaming/Channels/101 and /102.
+# --- Camera source ----------------------------------------------------------
+# Battery Tapo cameras (C403 etc.) have no RTSP — go2rtc speaks TP-Link's
+# proprietary protocol instead. Uses your Tapo CLOUD password (the connection
+# itself stays on the LAN). Replace the IP with your camera's.
+# The camera only streams while the tapo-bridge wakes it (see README).
 go2rtc:
   streams:
-    hillside: # main stream: high-res, used for recording
-      - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.51:554/cam/realmonitor?channel=1&subtype=0
-    hillside_sub: # substream: low-res, used for detection
-      - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.51:554/cam/realmonitor?channel=1&subtype=1
-    # Second camera (optional) — different angle on the same hill:
-    # hillside_east:
-    #   - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.52:554/cam/realmonitor?channel=1&subtype=0
-    # hillside_east_sub:
-    #   - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.52:554/cam/realmonitor?channel=1&subtype=1
+    hillside_tapo:
+      - tapo://{FRIGATE_TAPO_CLOUD_PASSWORD}@192.168.1.60
 
 cameras:
-  hillside:
+  hillside_tapo:
+    # Must stay `enabled: true`: Frigate rejects the tapo-bridge's MQTT wake
+    # command for cameras disabled in config. The bridge puts the camera to
+    # sleep on startup and only wakes it during PIR-triggered windows.
     enabled: true
     ffmpeg:
       inputs:
-        - path: rtsp://127.0.0.1:8554/hillside_sub
+        - path: rtsp://127.0.0.1:8554/hillside_tapo
           input_args: preset-rtsp-restream
-          roles: [detect]
-        - path: rtsp://127.0.0.1:8554/hillside
-          input_args: preset-rtsp-restream
-          roles: [record]
+          roles: [detect, record]
 
-    # Match your camera's substream. 5 fps is the sweet spot for detection —
-    # higher wastes GPU without catching more bears.
+    # 5 fps is the sweet spot for detection — higher wastes GPU (and camera
+    # battery) without catching more bears.
     detect:
       width: 1280
       height: 720
@@ -83,17 +76,12 @@ cameras:
           min_score: 0.5
           threshold: 0.7
 
-    # Paint out perpetually-moving foliage (treetops) in the UI:
-    # Settings -> Motion Masks. The UI saves coordinates back to this file.
-    # motion:
-    #   mask:
-    #     - 0.0,0.0,1.0,0.0,1.0,0.15,0.0,0.15   # example: top 15% = swaying canopy
-
-    # Draw the actual hill polygon in the UI (Settings -> Zones); this
-    # placeholder covers the upper 2/3 of frame.
+    # Covers the full frame by default; redraw over the actual hill in the UI
+    # (Settings -> Zones) once the camera is mounted. Keep the name — the
+    # bear-notifier's REQUIRED_ZONES filter matches on it.
     zones:
       wooded_hill:
-        coordinates: 0.0,0.0,1.0,0.0,1.0,0.66,0.0,0.66
+        coordinates: 0.0,0.0,1.0,0.0,1.0,1.0,0.0,1.0
         objects: [bear, dog, cat, cow, person]
 
     review:
@@ -111,18 +99,13 @@ cameras:
     record:
       enabled: true
       retain:
-        days: 3 # continuous recording buffer
-        mode: motion
+        days: 0 # camera only streams during motion windows anyway
       alerts:
         retain:
           days: 30 # keep bear clips a month
       detections:
         retain:
           days: 14
-      # To cut disk write load in half (e.g. if Surveillance Station also
-      # records 24/7), set retain.days: 0 to keep only alert/detection clips.
-
-  # hillside_east:  # uncomment and mirror the block above for camera #2
 
 # Native Frigate web-push notifications (alternative to the ntfy bridge).
 # Requires HTTPS access to the UI; register devices under Settings -> Notifications.
