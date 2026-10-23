@@ -228,6 +228,28 @@ C403 PIR fires ──Tapo automation──> smart plug ON
 4. Start with the profile enabled:
    `sudo docker compose --profile tapo up -d`
 
+**Fail-safe behavior** (the design rule is: when anything breaks, the camera
+must end up *asleep*, and you must find out):
+
+- If the bridge crashes, an MQTT Last Will message puts the camera to sleep;
+  clean shutdowns (`docker compose down`) do the same explicitly.
+- The bridge continuously reconciles the camera's actual state in Frigate
+  against what it should be (QoS 1 commands + state subscription + periodic
+  re-assert), which also corrects things after Frigate or broker restarts.
+- Plug triggers are edge-detected, so a plug stuck ON can't re-trigger or
+  spam; the reset is retried every poll.
+- 30 s into each wake window the bridge verifies frames are actually flowing
+  from the camera; if not, you get a "camera failed to wake — motion was
+  real" push instead of silent nothing.
+- If the plug goes unreachable for 5+ minutes you get a "tripwire is down"
+  push (rate-limited, with a recovery notice) — a dead plug means a disarmed
+  tripwire, which is otherwise invisible.
+- Optional canary (`STALE_TRIGGER_HOURS`): no PIR triggers for N hours →
+  one reminder push, in case the Tapo automation silently broke. Enable it
+  once you know the hill's normal wildlife rhythm.
+- The container has a HEALTHCHECK tied to the poll loop's heartbeat, so a
+  wedged bridge shows as *unhealthy* in Container Manager.
+
 **Caveats, honestly:**
 
 - The PIR→plug→bridge→stream-wakeup chain takes a few seconds; the camera's

@@ -93,7 +93,11 @@ services:
       TAPO_PASSWORD: ${TAPO_PASSWORD:-}
       # Frigate camera (see config.yml) to wake while motion is active:
       FRIGATE_CAMERA: hillside_tapo
+      FRIGATE_URL: http://frigate:5000
       WINDOW_SECONDS: "180"
+      # Canary: warn if no PIR trigger for this many hours (0 disables).
+      # Enable once you know the hill's normal activity rhythm.
+      STALE_TRIGGER_HOURS: "0"
       # Also push a plain "motion" notification on every PIR trigger (not
       # just confirmed bears):
       NOTIFY_ON_MOTION: "false"
