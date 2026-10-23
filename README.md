@@ -180,7 +180,74 @@ Prereq: **Container Manager** installed from Package Center (DSM 7.2+).
   and thinner than a bear's bounding box at the same spot); Frigate+
   distinguishes `deer` as its own label.
 
-## 6. Coexisting with Surveillance Station
+## 6. Battery cameras without RTSP (Tapo C403 and friends)
+
+Battery Tapo cameras (C403/C402, C410, C420, C425…) **do not expose RTSP or
+ONVIF** — TP-Link disables them by design because a camera that streams 24/7
+is a camera with a dead battery. They sleep until their PIR sensor fires, so
+they can't be a normal Frigate camera. Two things still make the C403 useful
+as a *second pair of eyes* on the hill:
+
+1. **go2rtc (built into Frigate) speaks Tapo's proprietary protocol.** A
+   `tapo://<cloud-password>@<camera-ip>` stream (local connection, port 8800;
+   the "cloud password" is just the credential Tapo uses) gives Frigate live
+   video on demand — same mechanism the Tapo app uses.
+2. **Its onboard motion detection can be caught via a smart-plug tripwire.**
+   There's no local event push from battery cams, but the Tapo app can flip a
+   smart plug when the camera detects motion — and a plug *is* locally
+   pollable, instantly.
+
+This repo's optional `tapo-bridge` service chains these together:
+
+```
+C403 PIR fires ──Tapo automation──> smart plug ON
+                                       │ (bridge polls the plug ~1s, LAN-only)
+                                       ▼
+            bridge resets plug, wakes `hillside_tapo` in Frigate over MQTT
+                                       ▼
+        Frigate pulls the tapo:// stream, runs bear detection for 3 min
+                                       ▼
+          bear found -> normal ntfy alert   |   window ends -> camera sleeps
+```
+
+**Setup:**
+
+1. Buy any Tapo (P110/P115) or Kasa smart plug if you don't have one (~$10).
+   It needs no load plugged into it — it's purely a signal flag.
+2. In the Tapo app: *Smart Actions → New automation →* **when** C403 detects
+   motion (or person/animal if your firmware offers it) → **then** turn on
+   the plug. Add a second automation or "delay" action to turn it off after a
+   minute as a belt-and-braces reset (the bridge also resets it immediately).
+   If your app version doesn't offer the camera as a trigger, an
+   Alexa/Google routine ("When C403 detects motion → turn on plug") does the
+   same thing.
+3. Uncomment the `hillside_tapo` camera and go2rtc stream in
+   `frigate/config/config.yml`, set the camera's LAN IP, and fill the
+   battery-camera section of `.env` (plug IP, TP-Link credentials, Tapo cloud
+   password).
+4. Start with the profile enabled:
+   `sudo docker compose --profile tapo up -d`
+
+**Caveats, honestly:**
+
+- The PIR→plug→bridge→stream-wakeup chain takes a few seconds; the camera's
+  own SD/hub clip starts recording immediately, but Frigate joins the party
+  ~3–8 s in. Bears amble — in practice they're still in frame. The Tapo
+  automation step typically routes through TP-Link's cloud, so this one
+  camera's *trigger* isn't fully local (detection still is).
+- Streaming during motion windows costs battery beyond normal app use. If
+  the hill gets a lot of nightly wildlife traffic, pair the C403 with its
+  solar panel, or set `NOTIFY_ON_MOTION: "true"` and skip the Frigate wake
+  entirely by leaving the `hillside_tapo` camera commented out — you'll get
+  plain "motion on C403" pushes with zero extra battery cost.
+- Wake-on-connect on sleeping Tapo cams can be flaky (sometimes needs a
+  retry); Frigate's ffmpeg watchdog retries automatically, but expect the
+  occasional missed window.
+- For the *primary* bear watch, a wired PoE camera running through Frigate
+  24/7 (sections 1–5) remains the reliable path — use the C403 for angles
+  where you can't pull a cable.
+
+## 7. Coexisting with Surveillance Station
 
 Keep it. Frigate connects to the cameras' RTSP streams directly and in
 parallel — cameras happily serve both. If a camera limits concurrent RTSP
@@ -198,4 +265,5 @@ docker-compose.yml          # Frigate + Mosquitto + bear-notifier (Synology-tune
 frigate/config/config.yml   # cameras, GPU detector, bear tracking, zones
 mosquitto/mosquitto.conf    # internal-only MQTT broker config
 notifier/bear_notifier.py   # MQTT → ntfy bridge, bear-filtered, with snapshots
+tapo-bridge/tapo_bridge.py  # optional: smart-plug tripwire for battery Tapo cams
 ```

@@ -31,6 +31,8 @@ services:
       - "8555:8555/udp"
     environment:
       FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+      # Tapo cloud password, only needed for battery Tapo cameras (tapo:// streams)
+      FRIGATE_TAPO_CLOUD_PASSWORD: ${FRIGATE_TAPO_CLOUD_PASSWORD:-}
     # --- Case B (NVIDIA / DVA3221) --------------------------------------
     # runtime: nvidia
     # environment:
@@ -71,6 +73,33 @@ services:
       PROXY_MIN_AREA: "30000"
       REQUIRED_ZONES: wooded_hill
       COOLDOWN_SECONDS: "120"
+    depends_on:
+      - mosquitto
+      - frigate
+
+  # Opt-in service for battery cameras without RTSP (Tapo C403 etc.) — see
+  # "Battery cameras" in the README. Start with:
+  #   docker compose --profile tapo up -d
+  tapo-bridge:
+    build: ./tapo-bridge
+    container_name: tapo-bridge
+    restart: unless-stopped
+    profiles: [tapo]
+    environment:
+      MQTT_HOST: mosquitto
+      # The smart plug flipped ON by the Tapo app automation on camera motion:
+      PLUG_HOST: ${TAPO_PLUG_HOST:-}
+      TAPO_USERNAME: ${TAPO_USERNAME:-}
+      TAPO_PASSWORD: ${TAPO_PASSWORD:-}
+      # Frigate camera (see config.yml) to wake while motion is active:
+      FRIGATE_CAMERA: hillside_tapo
+      WINDOW_SECONDS: "180"
+      # Also push a plain "motion" notification on every PIR trigger (not
+      # just confirmed bears):
+      NOTIFY_ON_MOTION: "false"
+      NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
     depends_on:
       - mosquitto
       - frigate
